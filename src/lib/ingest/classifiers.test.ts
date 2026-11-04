@@ -172,6 +172,88 @@ describe("classifyEmail — real-world formats", () => {
     if (c.kind === "APPLICATION") {
       expect(c.rejected).toBe(true);
       expect(c.company).toBe("athenahealth");
+      expect(c.role).toBe("Senior Product Manager - AI Trust & Transparency"); // leading R15470 stripped
+    }
+  });
+
+  it("does NOT mark a confirmation rejected just because it says 'unfortunately'", () => {
+    const c = classifyEmail(
+      email({
+        from: "salesforce@myworkday.com",
+        subject: "Update on your application",
+        bodyText:
+          "Hi Kavya, Thank you for your interest in Salesforce. Thanks for applying to the Senior Product Manager, Emerging Technology position. Unfortunately, due to volume we can't respond to every applicant individually, but our team is reviewing your application.",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.rejected).toBe(false);
+      expect(c.company).toBe("Salesforce");
+    }
+  });
+
+  it("conditional 'if you are not selected' in a confirmation stays Applied", () => {
+    const c = classifyEmail(
+      email({
+        from: "DeltaDental@workflow.email.us-phoenix-1.ocs.oraclecloud.com",
+        subject: "Delta Dental: Your recent job application for Senior Data Program Consultant - 3525",
+        bodyText:
+          "Hello Kavya, Thank you for your interest in Delta Dental! We have successfully received your application for the Senior Data Program Consultant role and appreciate the time you took to apply. If you are not selected for this position, please check our career site.",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.rejected).toBe(false);
+      expect(c.company).toBe("Delta Dental");
+      expect(c.role).toBe("Senior Data Program Consultant");
+    }
+  });
+
+  it("Expedia rejection: real role (not 'another' from 'apply for another role')", () => {
+    const c = classifyEmail(
+      email({
+        from: "expedia@myworkday.com",
+        subject: "Thank you for your interest in Expedia Group",
+        bodyText:
+          "Hi Kavya, Thank You for taking time to apply for the Principal Product Manager, Brand Expedia AI Experiences position. We're grateful for your interest in Expedia Group. After reviewing your application, we've decided to move forward with other candidates. We hope you'll consider applying for another role at Expedia Group.",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.rejected).toBe(true);
+      expect(c.role).toBe("Principal Product Manager, Brand Expedia AI Experiences");
+    }
+  });
+
+  it("Intuitive 'Applying to the {Role} at {Company}' → company Intuitive, not the role", () => {
+    const c = classifyEmail(
+      email({
+        from: "notification@careers.intusurg.com",
+        fromName: "Intuitive",
+        subject: "Thank You for Applying to the Product Manager at Intuitive.",
+        bodyText: "Hi Kavya, On behalf of the Intuitive team, we would like to say THANK YOU!",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.company).toBe("Intuitive");
+      expect(c.role).toBe("Product Manager");
+    }
+  });
+
+  it("Workday 'application for: <reqid> <Role> (Open)' → role without id/suffix", () => {
+    const c = classifyEmail(
+      email({
+        from: "cvshealth@myworkday.com",
+        subject: "Your application with Oak Street Health has been received!",
+        bodyText:
+          "Dear Kavya, Thank you for your interest in joining Oak Street Health! We've successfully received your application for: R1080292 Senior Manager - Digital Product (Risk Modeling) (Open) To check status...",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.company).toBe("Oak Street Health");
+      expect(c.role).toBe("Senior Manager - Digital Product (Risk Modeling)");
     }
   });
 

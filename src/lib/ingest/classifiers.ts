@@ -75,8 +75,11 @@ const APPLICATION_PATTERNS = [
   /thank you for your (recent )?application/i,
 ];
 
+// Strong, explicit rejection phrases only. "unfortunately" is deliberately
+// excluded — ATS *confirmations* use it too ("unfortunately we can't reply to
+// each applicant"), which would false-positive real applications as rejected.
 const REJECTION_PATTERNS =
-  /not (?:to|be) mov(?:e|ing) forward|decided not to (?:move|proceed|continue)|will not be (?:moving|proceeding)|move forward with other|pursue other candidate|not (?:be )?(?:selected|moving forward)|position has (?:been|since been) filled|unfortunately/i;
+  /\bnot (?:to|be) mov(?:e|ing) forward\b|decided not to (?:move|proceed|continue)|will not be (?:moving|proceeding)|move forward with (?:other|another)|pursue other candidate|you (?:have|were|was) not (?:been )?selected|not (?:be )?moving forward|position has (?:been|since been) filled|decided to (?:proceed|move forward) with (?:other|another)|regret to inform|unable to (?:move forward|offer you)|will not be progressing/i;
 
 /** Pull a company name out of an application-confirmation email. */
 export function extractCompany(email: NormalizedEmail): string | null {
@@ -86,7 +89,8 @@ export function extractCompany(email: NormalizedEmail): string | null {
 
   const text = stripZeroWidth(`${email.subject}\n${email.bodyText}`);
   const patterns = [
-    /thank you for applying (?:at|to)\s+([A-Za-z][\w&.,'’\-() ]{1,45}?)(?:[.!\n]|$)/i,
+    /applying to the\s+.+?\s+at\s+([A-Z][\w&.'’\-() ]{1,45}?)[.!]?\s*$/im, // "Applying to the {Role} at {Company}."
+    /thank you for applying (?:at|to)\s+(?!the\b)([A-Za-z][\w&.,'’\-() ]{1,45}?)(?:[.!\n]|$)/i,
     /your application (?:with|to)\s+([A-Za-z][\w&.,'’\-() ]{1,45}?)\s+(?:has been|was|is)\b/i,
     /\bapplication (?:to|with)\s+(?!the\b)([A-Z][\w&.'’\- ]{1,45}?)(?:\s+(?:has been|was|is|received)\b|[.!\n]|$)/,
     /thank(?:s| you) for your interest in (?:joining\s+)?([A-Za-z][\w&.,'’\-() ]{1,45}?)(?:[.!®\n]|$)/i,
@@ -116,8 +120,9 @@ export function extractRole(email: NormalizedEmail): string | null {
   const text = stripZeroWidth(`${email.subject}\n${email.bodyText}`);
   const patterns = [
     /thank you for applying to the\s+(.+?)\s+at\b/i,
-    /appl(?:ication|ying)\s+(?:to|for)\s+(?:the\s+)?(.+?)\s+(?:position|role)\b/i,
-    /received your (?:application|resume) for(?:\s+the following role:)?\s+(.+?)(?:[.!\n]|$)/i,
+    /appl(?:ication|ying|y)\s+(?:to|for)\s+(?:the\s+)?(.+?)\s+(?:position|role)\b/i,
+    /received your (?:application|resume) for:?(?:\s+the following role:)?\s+(.+?)(?:\s*\(Open\)|\s+To\s|[.!\n]|$)/i,
+    /\bapplication for:\s*(.+?)(?:\s*\(Open\)|\s+To\s|[.!\n]|$)/i,
     /(?:recent )?(?:job )?application for\s+(?:the\s+)?(.+?)(?:\s+-\s*\d+|[.!\n]|$)/i,
     /your application for\s+(?:the\s+)?(.+?)(?:\s+role|\s+position|\s+at\b|[.!\n]|$)/i,
   ];
@@ -132,6 +137,7 @@ export function extractRole(email: NormalizedEmail): string | null {
 
 function cleanRole(raw: string): string {
   return stripZeroWidth(raw)
+    .replace(/^\s*(?:R-?\d+|REQ-?\d+|#?\d{4,})\s+/i, "") // leading requisition id
     .replace(/\s+at\s+[A-Z].*$/, "") // trailing "at Company"
     .replace(/\s*\(Open\)\s*$/i, "")
     .replace(/\s+(?:R-?\d+|REQ-?\d+|#?\d{5,}|[A-Z]\d{4,}).*$/i, "") // req ids

@@ -125,6 +125,110 @@ describe("classifyEmail", () => {
   });
 });
 
+// Cases drawn from real inbox formats (Workday, iCIMS, Oracle, Apple, Sarthak).
+describe("classifyEmail — real-world formats", () => {
+  it("Workday confirmation: company from body 'at X', strips 'Services Inc' + req id", () => {
+    const c = classifyEmail(
+      email({
+        from: "jj@myworkday.com",
+        fromName: "Workday Notification",
+        subject: "We’ve received your application",
+        bodyText:
+          "Hi Kavya, We've received your application for Senior Manager, Commercial Data & Insights R-081553 at Johnson & Johnson Services Inc. Thanks so much for your interest.",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.company).toBe("Johnson & Johnson");
+      expect(c.role).toBe("Senior Manager, Commercial Data & Insights");
+      expect(c.rejected).toBe(false);
+      expect(c.domain).toBeNull();
+    }
+  });
+
+  it("iCIMS: company from the 'Acme @ icims' display name", () => {
+    const c = classifyEmail(
+      email({
+        from: "chla+autoreply@talent.icims.com",
+        fromName: "Children's Hospital Los Angeles  @ icims",
+        subject: "Thank you for applying at Children's Hospital Los Angeles",
+        bodyText: "Dear Kavya, Thank you very much for your recent application to the Sr. Product Manager position at Children's Hospital Los Angeles.",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") expect(c.company).toBe("Children's Hospital Los Angeles");
+  });
+
+  it("distinguishes a rejection from a confirmation", () => {
+    const c = classifyEmail(
+      email({
+        from: "athenahealth@myworkday.com",
+        subject: "Thank you for your interest in athenahealth",
+        bodyText:
+          "Hi Kavya, Thank you for your interest in joining athenahealth. After reviewing your application for the R15470 Senior Product Manager - AI Trust & Transparency position, we have made the decision not to move forward with your candidacy.",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.rejected).toBe(true);
+      expect(c.company).toBe("athenahealth");
+    }
+  });
+
+  it("does not treat an out-of-office auto-reply as a human reply", () => {
+    const c = classifyEmail(
+      email({
+        from: "stewart.campbell@cvshealth.com",
+        subject: "Automatic reply: [EXTERNAL] Interest in CVS Health - virtual coffee chat?",
+        inReplyTo: "<x@mail>",
+        bodyText: "Hello - I am out of the office today and returning tomorrow.",
+      }),
+    );
+    expect(c.kind).toBe("IGNORED");
+  });
+
+  it("Sarthak job-match report: detected by signature, company + multiple roles", () => {
+    const c = classifyEmail(
+      email({
+        from: "sarthaksgsits@gmail.com",
+        fromName: "Sarthak Bichhawa",
+        subject: "Microsoft job matches for Kavya — November 3",
+        bodyText:
+          "Microsoft job matches for Kavya\n\nThis is an automated job-match report. Sarthak has not reviewed these recommendations yet.\n\n1. Principal Product Management Lead – Analytics · 200061916\n2. Principal Product Manager, capacity intelligence · 200047844\n3. Senior Product Manager, Microsoft Purview · 200063760",
+      }),
+    );
+    expect(c.kind).toBe("LEAD");
+    if (c.kind === "LEAD") {
+      expect(c.source).toBe("SARTHAK");
+      expect(c.company).toBe("Microsoft");
+      expect(c.roles).toHaveLength(3);
+      expect(c.roles[0]).toBe("Principal Product Management Lead – Analytics");
+    }
+  });
+
+  it("Apple: 'Thanks for your interest' + resume role with trailing req number", () => {
+    const c = classifyEmail(
+      email({
+        from: "appleworldwiderecruiting@email.apple.com",
+        subject: "Thanks for your interest in Apple.",
+        bodyText: "Hi Kavya, We just received your resume for the following role: Conversational Commerce Program Manager 200689354. Thanks for thinking of us.",
+      }),
+    );
+    expect(c.kind).toBe("APPLICATION");
+    if (c.kind === "APPLICATION") {
+      expect(c.company).toBe("Apple");
+      expect(c.role).toBe("Conversational Commerce Program Manager");
+    }
+  });
+
+  it("ignores job-board digests (Haystack)", () => {
+    const c = classifyEmail(
+      email({ from: "matches@updates.haystackapp.io", fromName: "Haystack", subject: "5 new jobs to approve" }),
+    );
+    expect(c.kind).toBe("IGNORED");
+  });
+});
+
 describe("parseJobleadsSubject", () => {
   it("handles em dash, en dash, and hyphen separators", () => {
     expect(parseJobleadsSubject("[JOBLEADS] Stripe — Senior PM")).toEqual({ company: "Stripe", role: "Senior PM" });

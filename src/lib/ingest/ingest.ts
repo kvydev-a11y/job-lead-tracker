@@ -100,6 +100,49 @@ async function applyClassification(
 ): Promise<void> {
   switch (cls.kind) {
     case "APPLICATION": {
+      // Rejection: move the matching open application to REJECTED (don't create
+      // a fresh APPLIED row).
+      if (cls.rejected) {
+        const open = await prisma.application.findFirst({
+          where: {
+            OR: [{ gmailThreadId: email.threadId }, { company: cls.company }],
+            stage: { notIn: ["REJECTED", "GHOSTED", "OFFER"] },
+          },
+          orderBy: { appliedAt: "desc" },
+          select: { id: true, stage: true },
+        });
+        if (open) {
+          await prisma.$transaction([
+            prisma.application.update({
+              where: { id: open.id },
+              data: { stage: "REJECTED", stageUpdatedAt: email.date },
+            }),
+            prisma.stageEvent.create({
+              data: { applicationId: open.id, fromStage: open.stage, toStage: "REJECTED", at: email.date },
+            }),
+          ]);
+          summary.applications++;
+          return;
+        }
+        // No tracked application — still record the rejection outcome.
+        await prisma.application.create({
+          data: {
+            company: cls.company,
+            companyDomain: cls.domain,
+            role: cls.role ?? "(role unknown)",
+            source: "SITE",
+            stage: "REJECTED",
+            appliedAt: email.date,
+            stageUpdatedAt: email.date,
+            gmailThreadId: email.threadId,
+            stageEvents: { create: { toStage: "REJECTED", at: email.date } },
+          },
+        });
+        summary.applications++;
+        return;
+      }
+
+      // Confirmation: create unless we already track this thread or company+role.
       const existing = await prisma.application.findFirst({
         where: {
           OR: [
@@ -157,18 +200,23 @@ async function applyClassification(
     }
 
     case "LEAD": {
-      await prisma.lead.upsert({
-        where: { rawEmailId: email.id },
-        create: {
-          source: cls.source,
-          company: cls.company,
-          role: cls.role,
-          rawEmailId: email.id,
-          extracted: JSON.stringify({ subject: email.subject, snippet: email.snippet }),
-        },
-        update: {},
-      });
-      summary.leads++;
+      // A job-match report can recommend several roles — one lead each.
+      const roles: (string | null)[] = cls.roles.length ? cls.roles : [null];
+      for (let i = 0; i < roles.length; i++) {
+        const rawId = cls.roles.length > 1 ? `${email.id}#${i}` : email.id;
+        await prisma.lead.upsert({
+          where: { rawEmailId: rawId },
+          create: {
+            source: cls.source,
+            company: cls.company,
+            role: roles[i],
+            rawEmailId: rawId,
+            extracted: JSON.stringify({ subject: email.subject }),
+          },
+          update: {},
+        });
+        summary.leads++;
+      }
       return;
     }
 

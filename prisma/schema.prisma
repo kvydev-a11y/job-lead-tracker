@@ -118,6 +118,15 @@ model Lead {
 model ProcessedEmail {
   id             String   @id @default(cuid())
   gmailMessageId String   @unique
-  kind           String   // APPLICATION | REPLY | LINKEDIN | LEAD | MUSE_CONTACTS
+  kind           String   // APPLICATION | REPLY | LINKEDIN | LEAD | MUSE_CONTACTS | IGNORED
   processedAt    DateTime @default(now())
+}
+
+/// Generic key/value store for integration secrets and sync state, e.g.
+/// the Google OAuth refresh token, connected Gmail address, and the last
+/// Gmail history id / ingest cursor. One row per key.
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

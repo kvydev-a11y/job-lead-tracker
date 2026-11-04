@@ -6,6 +6,7 @@ import {
   Inbox,
   BarChart3,
   Briefcase,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -15,6 +16,7 @@ export const NAV = [
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/leads", label: "Leads", icon: Inbox },
   { href: "/insights", label: "Insights", icon: BarChart3 },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 function isActive(pathname: string | null, href: string) {

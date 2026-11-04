@@ -91,6 +91,38 @@ SQLite is for local dev. For a hosted deploy (e.g. Vercel + Neon):
    (`PrismaPg`). The queries don't change.
 4. `npm run db:migrate` against the new database, then deploy.
 
+## Gmail ingestion (Phase 2)
+
+Connects a Gmail account (read-only) to auto-populate applications, replies, and
+leads. The classifiers are pure functions with a unit-test suite
+(`npm run test`), so the parsing logic works without any credentials.
+
+**One-time Google Cloud setup:**
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project.
+2. **APIs & Services → Library →** enable the **Gmail API**.
+3. **OAuth consent screen →** External, add your own Google account as a **Test user**.
+4. **Credentials → Create credentials → OAuth client ID → Web application.**
+   Add redirect URI `http://localhost:3000/api/google/callback` (and your deployed
+   URL's `/api/google/callback`).
+5. Copy the client ID/secret into `.env`:
+
+   ```bash
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   GOOGLE_REDIRECT_URI=http://localhost:3000/api/google/callback
+   ```
+
+6. Restart, open **Settings → Connect Gmail**, approve, then **Sync now**.
+
+**How it runs:** the `/api/cron/ingest` endpoint pulls new mail and classifies
+it (application confirmations → applications; recruiter replies → outreach
+updates; LinkedIn notifications & lead emails → the Leads inbox; Muse
+`[JOBLEADS]` CSVs → contacts on the matching application). `vercel.json`
+schedules it hourly on deploy; locally use the **Sync now** button. Set
+`CRON_SECRET` in production to protect the endpoint, and `LEAD_SENDERS` to the
+addresses whose mail should be treated as curated leads.
+
 ## License
 
 MIT — see [LICENSE](./LICENSE).

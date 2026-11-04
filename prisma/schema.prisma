@@ -1,0 +1,123 @@
+// Job Application & Lead Tracker — Prisma schema (Prisma ORM 7)
+// Status/type columns are String (not native enums) so the schema runs on
+// SQLite for local dev AND swaps cleanly to Postgres/Neon for deploy.
+// Allowed values are enforced in app code via Zod unions (see src/lib/enums.ts).
+// learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// A job application and everything tied to it.
+model Application {
+  id             String   @id @default(cuid())
+  company        String
+  companyDomain  String?
+  role           String
+  roleType       String   @default("PM") // PM | EM | DESIGN | ENG | DATA | OTHER
+  source         String   @default("MANUAL") // LINKEDIN | REFERRAL | SITE | MUSE | SARTHAK | MANUAL
+  jobUrl         String?
+  jobDescription String?
+  appliedAt      DateTime @default(now())
+  stage          String   @default("APPLIED") // APPLIED | SCREEN | PHONE | ONSITE | OFFER | REJECTED | GHOSTED
+  stageUpdatedAt DateTime @default(now())
+  gmailThreadId  String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  stageEvents StageEvent[]
+  contacts    Contact[]
+  outreaches  Outreach[]
+  lead        Lead?
+
+  @@index([stage])
+  @@index([roleType])
+}
+
+/// Audit trail of stage transitions, powering the funnel/timeline.
+model StageEvent {
+  id            String   @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  fromStage     String?
+  toStage       String
+  at            DateTime @default(now())
+
+  @@index([applicationId])
+}
+
+/// A person associated with an application (HM, TA, recruiter, referral).
+model Contact {
+  id            String   @id @default(cuid())
+  applicationId String
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  name          String
+  title         String?
+  email         String?
+  linkedinUrl   String?
+  type          String   @default("OTHER") // HIRING_MANAGER | TALENT_ACQUISITION | RECRUITER | REFERRAL | OTHER
+  channel       String   @default("EMAIL") // EMAIL | LINKEDIN
+  source        String   @default("MANUAL") // HUNTER | APOLLO | MANUAL | MUSE | SARTHAK | LINKEDIN
+  confidence    Int?     // 0-100 where known
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  outreaches Outreach[]
+
+  @@index([applicationId])
+  @@index([email])
+}
+
+/// One conversation thread with a contact; drives follow-up detection.
+model Outreach {
+  id              String   @id @default(cuid())
+  applicationId   String
+  application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  contactId       String?
+  contact         Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  channel         String   @default("EMAIL") // EMAIL | LINKEDIN
+  gmailThreadId   String?
+  lastOutboundAt  DateTime?
+  lastInboundAt   DateTime?
+  status          String   @default("WAITING") // WAITING | REPLIED | STALE
+  followUpDueAt   DateTime?
+  responseSummary String?
+  draftFollowUp   String?  // generated draft held for user approval
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([applicationId])
+  @@index([status])
+  @@index([gmailThreadId])
+}
+
+/// Incoming lead from Sarthak's agent / Muse / other, awaiting triage.
+model Lead {
+  id                     String   @id @default(cuid())
+  source                 String   @default("OTHER") // SARTHAK | MUSE | OTHER
+  company                String?
+  role                   String?
+  rawEmailId             String?  @unique
+  extracted              String?  // JSON string of structured fields
+  status                 String   @default("NEW") // NEW | CONVERTED | DISMISSED
+  convertedApplicationId String?  @unique
+  convertedApplication   Application? @relation(fields: [convertedApplicationId], references: [id], onDelete: SetNull)
+  createdAt              DateTime @default(now())
+
+  @@index([status])
+  @@index([source])
+}
+
+/// Tracks which Gmail messages have been ingested, for idempotent polling.
+model ProcessedEmail {
+  id             String   @id @default(cuid())
+  gmailMessageId String   @unique
+  kind           String   // APPLICATION | REPLY | LINKEDIN | LEAD | MUSE_CONTACTS
+  processedAt    DateTime @default(now())
+}

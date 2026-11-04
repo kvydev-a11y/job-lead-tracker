@@ -1,11 +1,20 @@
-import { Placeholder } from "@/components/placeholder";
+import { Suspense } from "react";
+import { LeadsView } from "@/components/leads-view";
 
 export default function LeadsPage() {
   return (
-    <Placeholder title="Leads" phase="Phase 4">
-      This inbox will collect leads parsed from your email — role recommendations from Sarthak&apos;s
-      agent and contact lists from Meta Muse (the <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">[JOBLEADS]</code>{" "}
-      emails). You&apos;ll triage each into an application in one click.
-    </Placeholder>
+    <div className="mx-auto max-w-3xl px-5 py-6">
+      <header className="mb-5">
+        <h1 className="text-xl font-semibold tracking-tight">Leads</h1>
+        <p className="text-sm text-slate-500">
+          Incoming recommendations and contacts to triage into applications.
+        </p>
+      </header>
+      <Suspense
+        fallback={<div className="h-48 animate-pulse rounded-2xl bg-slate-100 dark:bg-slate-900/50" />}
+      >
+        <LeadsView />
+      </Suspense>
+    </div>
   );
 }

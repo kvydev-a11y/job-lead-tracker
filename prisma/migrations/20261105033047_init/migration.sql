@@ -1,6 +1,6 @@
 -- CreateTable
 CREATE TABLE "Application" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "company" TEXT NOT NULL,
     "companyDomain" TEXT,
     "role" TEXT NOT NULL,
@@ -8,28 +8,31 @@ CREATE TABLE "Application" (
     "source" TEXT NOT NULL DEFAULT 'MANUAL',
     "jobUrl" TEXT,
     "jobDescription" TEXT,
-    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "appliedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "stage" TEXT NOT NULL DEFAULT 'APPLIED',
-    "stageUpdatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "stageUpdatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "gmailThreadId" TEXT,
     "notes" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Application_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "StageEvent" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "applicationId" TEXT NOT NULL,
     "fromStage" TEXT,
     "toStage" TEXT NOT NULL,
-    "at" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "StageEvent_applicationId_fkey" FOREIGN KEY ("applicationId") REFERENCES "Application" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "StageEvent_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "Contact" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "applicationId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "title" TEXT,
@@ -40,32 +43,33 @@ CREATE TABLE "Contact" (
     "source" TEXT NOT NULL DEFAULT 'MANUAL',
     "confidence" INTEGER,
     "notes" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "Contact_applicationId_fkey" FOREIGN KEY ("applicationId") REFERENCES "Application" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Contact_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "Outreach" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "applicationId" TEXT NOT NULL,
     "contactId" TEXT,
     "channel" TEXT NOT NULL DEFAULT 'EMAIL',
     "gmailThreadId" TEXT,
-    "lastOutboundAt" DATETIME,
-    "lastInboundAt" DATETIME,
+    "lastOutboundAt" TIMESTAMP(3),
+    "lastInboundAt" TIMESTAMP(3),
     "status" TEXT NOT NULL DEFAULT 'WAITING',
-    "followUpDueAt" DATETIME,
+    "followUpDueAt" TIMESTAMP(3),
     "responseSummary" TEXT,
     "draftFollowUp" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updatedAt" DATETIME NOT NULL,
-    CONSTRAINT "Outreach_applicationId_fkey" FOREIGN KEY ("applicationId") REFERENCES "Application" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
-    CONSTRAINT "Outreach_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Outreach_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "Lead" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "source" TEXT NOT NULL DEFAULT 'OTHER',
     "company" TEXT,
     "role" TEXT,
@@ -73,16 +77,28 @@ CREATE TABLE "Lead" (
     "extracted" TEXT,
     "status" TEXT NOT NULL DEFAULT 'NEW',
     "convertedApplicationId" TEXT,
-    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "Lead_convertedApplicationId_fkey" FOREIGN KEY ("convertedApplicationId") REFERENCES "Application" ("id") ON DELETE SET NULL ON UPDATE CASCADE
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Lead_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
 CREATE TABLE "ProcessedEmail" (
-    "id" TEXT NOT NULL PRIMARY KEY,
+    "id" TEXT NOT NULL,
     "gmailMessageId" TEXT NOT NULL,
     "kind" TEXT NOT NULL,
-    "processedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    "processedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "ProcessedEmail_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Setting" (
+    "key" TEXT NOT NULL,
+    "value" TEXT NOT NULL,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "Setting_pkey" PRIMARY KEY ("key")
 );
 
 -- CreateIndex
@@ -123,3 +139,18 @@ CREATE INDEX "Lead_source_idx" ON "Lead"("source");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ProcessedEmail_gmailMessageId_key" ON "ProcessedEmail"("gmailMessageId");
+
+-- AddForeignKey
+ALTER TABLE "StageEvent" ADD CONSTRAINT "StageEvent_applicationId_fkey" FOREIGN KEY ("applicationId") REFERENCES "Application"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Contact" ADD CONSTRAINT "Contact_applicationId_fkey" FOREIGN KEY ("applicationId") REFERENCES "Application"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Outreach" ADD CONSTRAINT "Outreach_applicationId_fkey" FOREIGN KEY ("applicationId") REFERENCES "Application"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Outreach" ADD CONSTRAINT "Outreach_contactId_fkey" FOREIGN KEY ("contactId") REFERENCES "Contact"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Lead" ADD CONSTRAINT "Lead_convertedApplicationId_fkey" FOREIGN KEY ("convertedApplicationId") REFERENCES "Application"("id") ON DELETE SET NULL ON UPDATE CASCADE;

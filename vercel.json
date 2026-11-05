@@ -2,11 +2,11 @@
   "crons": [
     {
       "path": "/api/cron/ingest",
-      "schedule": "0 * * * *"
+      "schedule": "0 13 * * *"
     },
     {
       "path": "/api/cron/followups",
-      "schedule": "0 13 * * *"
+      "schedule": "30 13 * * *"
     }
   ]
 }

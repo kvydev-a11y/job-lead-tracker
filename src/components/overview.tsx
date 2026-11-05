@@ -79,36 +79,7 @@ export async function Overview() {
         />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Follow-ups due */}
-        <section className="rounded-2xl border border-border bg-card p-5">
-          <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-            <Clock className="h-4 w-4 text-rose-400" />
-            Follow-ups due
-          </h2>
-          {followUps.length === 0 ? (
-            <p className="py-6 text-center text-xs text-slate-400">
-              Nothing waiting on a reply past {" "}
-              <span className="font-medium">7 days</span>. Outreach auto-tracks once email sync is
-              connected.
-            </p>
-          ) : (
-            <ul className="space-y-2">
-              {followUps.slice(0, 6).map((a) => (
-                <li key={a.id}>
-                  <Link
-                    href={`/applications/${a.id}`}
-                    className="flex items-center justify-between rounded-lg px-2 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/40"
-                  >
-                    <span className="text-sm font-medium">{a.company}</span>
-                    <span className="text-xs text-slate-400">{a.role}</span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
+      <div className="grid gap-6">
         {/* Traction by role type */}
         <section className="rounded-2xl border border-border bg-card p-5">
           <h2 className="mb-3 text-sm font-semibold">Traction by role type</h2>

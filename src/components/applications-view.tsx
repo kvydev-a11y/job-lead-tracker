@@ -2,6 +2,7 @@ import { connection } from "next/server";
 import Link from "next/link";
 import { KanbanSquare, List, Inbox } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { anyFollowUpDue } from "@/lib/followups";
 import { cn } from "@/lib/utils";
 import type { RoleType, Source, Stage } from "@/lib/enums";
@@ -37,10 +38,12 @@ export async function ApplicationsView({
   searchParams: Promise<{ [k: string]: string | string[] | undefined }>;
 }) {
   await connection();
+  const userId = await requireUserId();
   const sp = await searchParams;
   const view = sp.view === "list" ? "list" : "board";
 
   const apps = await prisma.application.findMany({
+    where: { userId },
     orderBy: { stageUpdatedAt: "desc" },
     include: {
       _count: { select: { contacts: true } },

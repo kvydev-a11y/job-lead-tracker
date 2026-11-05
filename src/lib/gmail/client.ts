@@ -45,8 +45,11 @@ export function getAuthUrl(state?: string): string {
   });
 }
 
-/** Exchange an auth code for tokens and persist the refresh token + email. */
-export async function exchangeCodeAndStore(code: string): Promise<{ email: string | null }> {
+/** Exchange an auth code for tokens and persist the refresh token + email for a user. */
+export async function exchangeCodeAndStore(
+  userId: string,
+  code: string,
+): Promise<{ email: string | null }> {
   const client = createOAuthClient();
   const { tokens } = await client.getToken(code);
   if (!tokens.refresh_token) {
@@ -54,23 +57,23 @@ export async function exchangeCodeAndStore(code: string): Promise<{ email: strin
       "No refresh token returned. Revoke prior access and reconnect (prompt=consent).",
     );
   }
-  await setSetting(SettingKey.GoogleRefreshToken, tokens.refresh_token);
+  await setSetting(userId, SettingKey.GoogleRefreshToken, tokens.refresh_token);
 
   client.setCredentials(tokens);
   let email: string | null = null;
   try {
     const info = await google.oauth2({ version: "v2", auth: client }).userinfo.get();
     email = info.data.email ?? null;
-    if (email) await setSetting(SettingKey.GoogleEmail, email);
+    if (email) await setSetting(userId, SettingKey.GoogleEmail, email);
   } catch {
     // Non-fatal: email is only used for display.
   }
   return { email };
 }
 
-/** An authenticated Gmail client using the stored refresh token. */
-export async function getGmailClient(): Promise<gmail_v1.Gmail> {
-  const refreshToken = await getSetting(SettingKey.GoogleRefreshToken);
+/** An authenticated Gmail client using a user's stored refresh token. */
+export async function getGmailClient(userId: string): Promise<gmail_v1.Gmail> {
+  const refreshToken = await getSetting(userId, SettingKey.GoogleRefreshToken);
   if (!refreshToken) throw new Error("Gmail is not connected.");
   const client = createOAuthClient();
   client.setCredentials({ refresh_token: refreshToken });

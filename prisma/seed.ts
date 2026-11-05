@@ -1,4 +1,5 @@
 import "dotenv/config";
+import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
@@ -7,29 +8,38 @@ const prisma = new PrismaClient({ adapter });
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000);
 
-/** Attach an outreach to a named contact of an application. */
 async function addOutreach(
+  userId: string,
   applicationId: string,
   contactId: string,
-  data: {
-    lastOutboundAt?: Date;
-    lastInboundAt?: Date;
-    status: string;
-    responseSummary?: string;
-  },
+  data: { lastOutboundAt?: Date; lastInboundAt?: Date; status: string; responseSummary?: string },
 ) {
   await prisma.outreach.create({
-    data: { applicationId, contactId, channel: "EMAIL", ...data },
+    data: { userId, applicationId, contactId, channel: "EMAIL", ...data },
   });
 }
 
 async function main() {
-  await prisma.lead.deleteMany();
-  await prisma.application.deleteMany();
+  // Demo account — "Try the demo" logs into this read-mostly user.
+  const demo = await prisma.user.upsert({
+    where: { email: "demo@jobtracker.app" },
+    update: {},
+    create: {
+      email: "demo@jobtracker.app",
+      name: "Demo User",
+      isDemo: true,
+      passwordHash: await bcrypt.hash("demo-" + Math.random().toString(36).slice(2), 10),
+    },
+  });
+  const userId = demo.id;
 
-  // --- Stripe: deep pipeline; recruiter replied, HM gone quiet (follow-up due) ---
+  // Reset this user's data so the seed is idempotent.
+  await prisma.lead.deleteMany({ where: { userId } });
+  await prisma.application.deleteMany({ where: { userId } });
+
   const stripe = await prisma.application.create({
     data: {
+      userId,
       company: "Stripe",
       companyDomain: "stripe.com",
       role: "Senior PM, Payments",
@@ -39,7 +49,7 @@ async function main() {
       appliedAt: daysAgo(32),
       stageUpdatedAt: daysAgo(3),
       jobUrl: "https://stripe.com/jobs/listing/senior-pm",
-      notes: "Strong fit — payments infra. Referral intro via ex-colleague.",
+      notes: "Strong fit — payments infra.",
       stageEvents: {
         create: [
           { toStage: "APPLIED", at: daysAgo(32) },
@@ -50,8 +60,8 @@ async function main() {
       },
       contacts: {
         create: [
-          { name: "Priya Nair", title: "Technical Recruiter", email: "priya@stripe.com", type: "RECRUITER", source: "MANUAL" },
-          { name: "Marcus Lee", title: "Director of Product, Payments", email: "marcus@stripe.com", type: "HIRING_MANAGER", source: "HUNTER", confidence: 82 },
+          { userId, name: "Priya Nair", title: "Technical Recruiter", email: "priya@stripe.com", type: "RECRUITER", source: "MANUAL" },
+          { userId, name: "Marcus Lee", title: "Director of Product, Payments", email: "marcus@stripe.com", type: "HIRING_MANAGER", source: "HUNTER", confidence: 82 },
         ],
       },
     },
@@ -59,17 +69,17 @@ async function main() {
   });
   const priya = stripe.contacts.find((c) => c.name === "Priya Nair")!;
   const marcus = stripe.contacts.find((c) => c.name === "Marcus Lee")!;
-  await addOutreach(stripe.id, priya.id, {
+  await addOutreach(userId, stripe.id, priya.id, {
     lastOutboundAt: daysAgo(16),
     lastInboundAt: daysAgo(15),
     status: "REPLIED",
     responseSummary: "Scheduled the onsite loop for next week.",
   });
-  await addOutreach(stripe.id, marcus.id, { lastOutboundAt: daysAgo(9), status: "WAITING" });
+  await addOutreach(userId, stripe.id, marcus.id, { lastOutboundAt: daysAgo(9), status: "WAITING" });
 
-  // --- Ramp: phone stage, TA replied ---
   const ramp = await prisma.application.create({
     data: {
+      userId,
       company: "Ramp",
       companyDomain: "ramp.com",
       role: "Product Manager, Growth",
@@ -86,44 +96,20 @@ async function main() {
         ],
       },
       contacts: {
-        create: { name: "Dana Kim", title: "Talent Acquisition Partner", email: "dana@ramp.com", type: "TALENT_ACQUISITION", source: "MANUAL" },
+        create: { userId, name: "Dana Kim", title: "Talent Acquisition Partner", email: "dana@ramp.com", type: "TALENT_ACQUISITION", source: "MANUAL" },
       },
     },
     include: { contacts: true },
   });
-  await addOutreach(ramp.id, ramp.contacts[0].id, {
+  await addOutreach(userId, ramp.id, ramp.contacts[0].id, {
     lastOutboundAt: daysAgo(4),
     lastInboundAt: daysAgo(4),
     status: "REPLIED",
   });
 
-  // --- Notion: recruiter screen via referral ---
-  await prisma.application.create({
-    data: {
-      company: "Notion",
-      companyDomain: "notion.so",
-      role: "Group Product Manager",
-      roleType: "PM",
-      source: "REFERRAL",
-      stage: "SCREEN",
-      appliedAt: daysAgo(9),
-      stageUpdatedAt: daysAgo(6),
-      notes: "Referred by A. Gupta.",
-      stageEvents: {
-        create: [
-          { toStage: "APPLIED", at: daysAgo(9) },
-          { fromStage: "APPLIED", toStage: "SCREEN", at: daysAgo(6) },
-        ],
-      },
-      contacts: {
-        create: { name: "Aarav Gupta", title: "Senior PM (referral)", type: "REFERRAL", channel: "LINKEDIN", linkedinUrl: "https://linkedin.com/in/example", source: "MANUAL" },
-      },
-    },
-  });
-
-  // --- Airtable: from Muse, Muse-sourced HM, awaiting reply (follow-up due) ---
   const airtable = await prisma.application.create({
     data: {
+      userId,
       company: "Airtable",
       companyDomain: "airtable.com",
       role: "Senior Product Manager",
@@ -139,16 +125,16 @@ async function main() {
         ],
       },
       contacts: {
-        create: { name: "Elena Rossi", title: "Head of Product", email: "elena@airtable.com", type: "HIRING_MANAGER", source: "MUSE", confidence: 74 },
+        create: { userId, name: "Elena Rossi", title: "Head of Product", email: "elena@airtable.com", type: "HIRING_MANAGER", source: "MUSE", confidence: 74 },
       },
     },
     include: { contacts: true },
   });
-  await addOutreach(airtable.id, airtable.contacts[0].id, { lastOutboundAt: daysAgo(10), status: "WAITING" });
+  await addOutreach(userId, airtable.id, airtable.contacts[0].id, { lastOutboundAt: daysAgo(10), status: "WAITING" });
 
-  // --- Linear: offer! ---
   await prisma.application.create({
     data: {
+      userId,
       company: "Linear",
       companyDomain: "linear.app",
       role: "Product Manager",
@@ -170,9 +156,8 @@ async function main() {
     },
   });
 
-  // --- Simple recent / closed ones ---
   const simple = [
-    { company: "Anthropic", domain: "anthropic.com", role: "Product Manager, Claude", roleType: "PM", source: "SITE", stage: "APPLIED", applied: 2 },
+    { company: "Notion", domain: "notion.so", role: "Group Product Manager", roleType: "PM", source: "REFERRAL", stage: "SCREEN", applied: 9 },
     { company: "Figma", domain: "figma.com", role: "Product Designer", roleType: "DESIGN", source: "SITE", stage: "APPLIED", applied: 5 },
     { company: "Vanta", domain: "vanta.com", role: "Data PM", roleType: "DATA", source: "SARTHAK", stage: "APPLIED", applied: 8 },
     { company: "Databricks", domain: "databricks.com", role: "Engineering Manager", roleType: "EM", source: "LINKEDIN", stage: "REJECTED", applied: 28 },
@@ -182,6 +167,7 @@ async function main() {
   for (const s of simple) {
     await prisma.application.create({
       data: {
+        userId,
         company: s.company,
         companyDomain: s.domain,
         role: s.role,
@@ -195,16 +181,15 @@ async function main() {
     });
   }
 
-  // --- Incoming leads (triage inbox for Phase 4) ---
   await prisma.lead.createMany({
     data: [
-      { source: "SARTHAK", company: "Mercury", role: "Senior PM, Banking", status: "NEW", extracted: JSON.stringify({ reason: "Matches fintech PM profile", seniority: "Senior" }) },
-      { source: "MUSE", company: "Rippling", role: "Product Manager, Platform", status: "NEW", extracted: JSON.stringify({ contacts: 2, note: "2 recruiter contacts attached" }) },
+      { userId, source: "SARTHAK", company: "Mercury", role: "Senior PM, Banking", status: "NEW", extracted: JSON.stringify({ reason: "Matches fintech PM profile" }) },
+      { userId, source: "MUSE", company: "Rippling", role: "Product Manager, Platform", status: "NEW", extracted: JSON.stringify({ contacts: 2 }) },
     ],
   });
 
-  const count = await prisma.application.count();
-  console.log(`Seeded ${count} applications, contacts, outreaches, and 2 leads.`);
+  const count = await prisma.application.count({ where: { userId } });
+  console.log(`Seeded demo user (${demo.email}) with ${count} applications, contacts, outreaches, and 2 leads.`);
 }
 
 main()

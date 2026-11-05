@@ -30,7 +30,13 @@ const CONTACT_TYPE_MAP: Record<string, ContactType> = {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Fetch a message, retrying with exponential backoff on Gmail rate/quota errors. */
+function leadSendersFromEnv(): string[] {
+  return (process.env.LEAD_SENDERS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
 async function getMessageWithRetry(
   gmail: gmail_v1.Gmail,
   id: string,
@@ -43,7 +49,7 @@ async function getMessageWithRetry(
       const msg = err instanceof Error ? err.message : String(err);
       const isRate = /quota|rate ?limit|userRateLimitExceeded|\b429\b/i.test(msg);
       if (isRate && attempt < tries - 1) {
-        await sleep(2000 * Math.pow(2, attempt)); // 2s, 4s, 8s, 16s
+        await sleep(2000 * Math.pow(2, attempt));
         continue;
       }
       throw err;
@@ -51,16 +57,8 @@ async function getMessageWithRetry(
   }
 }
 
-function leadSendersFromEnv(): string[] {
-  return (process.env.LEAD_SENDERS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-/** Main entry: pull new Gmail messages, classify, and persist. Idempotent via
- *  the ProcessedEmail table, so re-runs never double-write. */
-export async function runIngest(): Promise<IngestSummary> {
+/** Pull new Gmail messages for one user, classify, and persist. Idempotent. */
+export async function runIngest(userId: string): Promise<IngestSummary> {
   const summary: IngestSummary = {
     connected: false,
     scanned: 0,
@@ -74,41 +72,36 @@ export async function runIngest(): Promise<IngestSummary> {
     errors: 0,
   };
 
-  if (!(await isGmailConnected())) return summary;
+  if (!(await isGmailConnected(userId))) return summary;
   summary.connected = true;
 
-  const gmail = await getGmailClient();
-  const lastIngest = await getSetting(SettingKey.GmailLastIngestAt);
+  const gmail = await getGmailClient(userId);
+  const lastIngest = await getSetting(userId, SettingKey.GmailLastIngestAt);
   const query = lastIngest
     ? `after:${Math.floor(new Date(lastIngest).getTime() / 1000)} -in:chats`
     : "newer_than:30d -in:chats";
 
   const ids = await listMessageIds(gmail, query);
-
-  // Skip anything we've already handled.
   const known = new Set(
     (
       await prisma.processedEmail.findMany({
-        where: { gmailMessageId: { in: ids } },
+        where: { userId, gmailMessageId: { in: ids } },
         select: { gmailMessageId: true },
       })
     ).map((r) => r.gmailMessageId),
   );
   const todo = ids.filter((id) => !known.has(id));
-
   const leadSenders = leadSendersFromEnv();
 
   for (const id of todo) {
     summary.scanned++;
     try {
-      await sleep(80); // smooth request rate to stay under the per-user quota
+      await sleep(80);
       const raw = await getMessageWithRetry(gmail, id);
       const email = parseGmailMessage(raw);
       const cls = classifyEmail(email, { leadSenders });
-      await applyClassification(email, cls, gmail, summary);
-      await prisma.processedEmail.create({
-        data: { gmailMessageId: id, kind: cls.kind },
-      });
+      await applyClassification(userId, email, cls, gmail, summary);
+      await prisma.processedEmail.create({ data: { userId, gmailMessageId: id, kind: cls.kind } });
     } catch (err) {
       summary.errors++;
       if (summary.errors <= 5) {
@@ -117,74 +110,16 @@ export async function runIngest(): Promise<IngestSummary> {
     }
   }
 
-  // Detect outbound emails to known contacts (targeted, not a full scan).
-  await ingestOutbound(gmail, summary);
+  await ingestOutbound(userId, gmail, summary);
 
-  // Only advance the cursor on a clean run; otherwise keep the window so
-  // errored messages are retried next time (ProcessedEmail dedups successes).
   if (summary.errors === 0) {
-    await setSetting(SettingKey.GmailLastIngestAt, new Date().toISOString());
+    await setSetting(userId, SettingKey.GmailLastIngestAt, new Date().toISOString());
   }
   return summary;
 }
 
-/**
- * For each contact with an email, find the newest message the user sent them
- * and record it as outreach (so the follow-up engine can track silence). One
- * targeted `in:sent to:<email>` lookup per contact — cheap and quota-friendly.
- * A newer outbound also clears a prior STALE flag (the user followed up).
- */
-async function ingestOutbound(gmail: gmail_v1.Gmail, summary: IngestSummary): Promise<void> {
-  const contacts = await prisma.contact.findMany({
-    where: { email: { not: null }, channel: "EMAIL" },
-    select: { id: true, email: true, applicationId: true },
-  });
-
-  for (const c of contacts) {
-    if (!c.email) continue;
-    try {
-      await sleep(80);
-      const ids = await listMessageIds(gmail, `in:sent to:${c.email}`, 1);
-      if (ids.length === 0) continue;
-      const email = parseGmailMessage(await getMessageWithRetry(gmail, ids[0]));
-
-      const existing = await prisma.outreach.findFirst({
-        where: { applicationId: c.applicationId, contactId: c.id },
-      });
-
-      if (!existing) {
-        await prisma.outreach.create({
-          data: {
-            applicationId: c.applicationId,
-            contactId: c.id,
-            channel: "EMAIL",
-            gmailThreadId: email.threadId,
-            lastOutboundAt: email.date,
-            status: "WAITING",
-          },
-        });
-        summary.outbound++;
-      } else if (email.date.getTime() > (existing.lastOutboundAt?.getTime() ?? 0)) {
-        await prisma.outreach.update({
-          where: { id: existing.id },
-          data: {
-            lastOutboundAt: email.date,
-            gmailThreadId: email.threadId,
-            // A fresh outbound resets a prior stale flag.
-            ...(existing.status === "STALE"
-              ? { status: "WAITING", draftFollowUp: null, followUpDueAt: null }
-              : {}),
-          },
-        });
-        summary.outbound++;
-      }
-    } catch {
-      summary.errors++;
-    }
-  }
-}
-
 async function applyClassification(
+  userId: string,
   email: NormalizedEmail,
   cls: Classification,
   gmail: gmail_v1.Gmail,
@@ -192,11 +127,10 @@ async function applyClassification(
 ): Promise<void> {
   switch (cls.kind) {
     case "APPLICATION": {
-      // Rejection: move the matching open application to REJECTED (don't create
-      // a fresh APPLIED row).
       if (cls.rejected) {
         const open = await prisma.application.findFirst({
           where: {
+            userId,
             OR: [{ gmailThreadId: email.threadId }, { company: cls.company }],
             stage: { notIn: ["REJECTED", "GHOSTED", "OFFER"] },
           },
@@ -216,14 +150,14 @@ async function applyClassification(
           summary.applications++;
           return;
         }
-        // No tracked application — record the rejection outcome, but only once.
         const alreadyRejected = await prisma.application.findFirst({
-          where: { company: cls.company, role: cls.role ?? "(role unknown)", stage: "REJECTED" },
+          where: { userId, company: cls.company, role: cls.role ?? "(role unknown)", stage: "REJECTED" },
           select: { id: true },
         });
         if (alreadyRejected) return;
         await prisma.application.create({
           data: {
+            userId,
             company: cls.company,
             companyDomain: cls.domain,
             role: cls.role ?? "(role unknown)",
@@ -239,9 +173,9 @@ async function applyClassification(
         return;
       }
 
-      // Confirmation: create unless we already track this thread or company+role.
       const existing = await prisma.application.findFirst({
         where: {
+          userId,
           OR: [
             { gmailThreadId: email.threadId },
             { company: cls.company, role: cls.role ?? undefined },
@@ -252,6 +186,7 @@ async function applyClassification(
       if (existing) return;
       await prisma.application.create({
         data: {
+          userId,
           company: cls.company,
           companyDomain: cls.domain,
           role: cls.role ?? "(role unknown)",
@@ -269,7 +204,7 @@ async function applyClassification(
 
     case "REPLY": {
       const outreaches = await prisma.outreach.findMany({
-        where: { gmailThreadId: cls.threadId },
+        where: { userId, gmailThreadId: cls.threadId },
         select: { id: true },
       });
       for (const o of outreaches) {
@@ -284,8 +219,9 @@ async function applyClassification(
 
     case "LINKEDIN": {
       await prisma.lead.upsert({
-        where: { rawEmailId: email.id },
+        where: { userId_rawEmailId: { userId, rawEmailId: email.id } },
         create: {
+          userId,
           source: "OTHER",
           rawEmailId: email.id,
           extracted: JSON.stringify({ channel: "LINKEDIN", person: cls.person, action: cls.action, subject: email.subject }),
@@ -297,13 +233,13 @@ async function applyClassification(
     }
 
     case "LEAD": {
-      // A job-match report can recommend several roles — one lead each.
       const roles: (string | null)[] = cls.roles.length ? cls.roles : [null];
       for (let i = 0; i < roles.length; i++) {
         const rawId = cls.roles.length > 1 ? `${email.id}#${i}` : email.id;
         await prisma.lead.upsert({
-          where: { rawEmailId: rawId },
+          where: { userId_rawEmailId: { userId, rawEmailId: rawId } },
           create: {
+            userId,
             source: cls.source,
             company: cls.company,
             role: roles[i],
@@ -319,7 +255,6 @@ async function applyClassification(
 
     case "MUSE_CONTACTS": {
       let rows = cls.rows;
-      // If the body had no CSV, try a .csv attachment.
       if (rows.length === 0) {
         const csvAtt = email.attachments.find((a) => /\.csv$/i.test(a.filename) || a.mimeType.includes("csv"));
         if (csvAtt) {
@@ -328,11 +263,12 @@ async function applyClassification(
         }
       }
 
-      const app = await findApplicationForMuse(cls.company, rows);
+      const app = await findApplicationForMuse(userId, cls.company, rows);
       if (!app) {
         await prisma.lead.upsert({
-          where: { rawEmailId: email.id },
+          where: { userId_rawEmailId: { userId, rawEmailId: email.id } },
           create: {
+            userId,
             source: "MUSE",
             company: cls.company,
             role: cls.role,
@@ -359,6 +295,7 @@ async function applyClassification(
         const conf = Number(row["confidence"]);
         await prisma.contact.create({
           data: {
+            userId,
             applicationId: app.id,
             name,
             title: row["title"] || null,
@@ -379,20 +316,71 @@ async function applyClassification(
   }
 }
 
-/** Match a Muse contact drop to an application by domain, then company name. */
 async function findApplicationForMuse(
+  userId: string,
   subjectCompany: string | null,
   rows: Record<string, string>[],
 ): Promise<{ id: string } | null> {
   const domains = [...new Set(rows.map((r) => (r["company_domain"] ?? "").toLowerCase()).filter(Boolean))];
   for (const d of domains) {
-    const byDomain = await prisma.application.findFirst({ where: { companyDomain: d }, select: { id: true } });
+    const byDomain = await prisma.application.findFirst({ where: { userId, companyDomain: d }, select: { id: true } });
     if (byDomain) return byDomain;
   }
   const names = [subjectCompany, ...rows.map((r) => r["company"])].filter(Boolean) as string[];
   for (const n of [...new Set(names)]) {
-    const byName = await prisma.application.findFirst({ where: { company: n }, select: { id: true } });
+    const byName = await prisma.application.findFirst({ where: { userId, company: n }, select: { id: true } });
     if (byName) return byName;
   }
   return null;
+}
+
+/** Detect outbound emails to a user's contacts (targeted, quota-friendly). */
+async function ingestOutbound(userId: string, gmail: gmail_v1.Gmail, summary: IngestSummary): Promise<void> {
+  const contacts = await prisma.contact.findMany({
+    where: { userId, email: { not: null }, channel: "EMAIL" },
+    select: { id: true, email: true, applicationId: true },
+  });
+
+  for (const c of contacts) {
+    if (!c.email) continue;
+    try {
+      await sleep(80);
+      const ids = await listMessageIds(gmail, `in:sent to:${c.email}`, 1);
+      if (ids.length === 0) continue;
+      const email = parseGmailMessage(await getMessageWithRetry(gmail, ids[0]));
+
+      const existing = await prisma.outreach.findFirst({
+        where: { userId, applicationId: c.applicationId, contactId: c.id },
+      });
+
+      if (!existing) {
+        await prisma.outreach.create({
+          data: {
+            userId,
+            applicationId: c.applicationId,
+            contactId: c.id,
+            channel: "EMAIL",
+            gmailThreadId: email.threadId,
+            lastOutboundAt: email.date,
+            status: "WAITING",
+          },
+        });
+        summary.outbound++;
+      } else if (email.date.getTime() > (existing.lastOutboundAt?.getTime() ?? 0)) {
+        await prisma.outreach.update({
+          where: { id: existing.id },
+          data: {
+            lastOutboundAt: email.date,
+            gmailThreadId: email.threadId,
+            ...(existing.status === "STALE"
+              ? { status: "WAITING", draftFollowUp: null, followUpDueAt: null }
+              : {}),
+          },
+        });
+        summary.outbound++;
+      }
+    } catch {
+      summary.errors++;
+    }
+  }
 }

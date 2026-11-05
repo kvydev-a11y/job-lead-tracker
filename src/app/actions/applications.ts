@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { RoleTypeSchema, SourceSchema, StageSchema } from "@/lib/enums";
 import { guessDomain } from "@/lib/utils";
 
@@ -21,6 +22,7 @@ const CreateApplicationSchema = z.object({
 export type ActionResult = { ok: true; id?: string } | { ok: false; error: string };
 
 export async function createApplication(formData: FormData): Promise<ActionResult> {
+  const userId = await requireUserId();
   const parsed = CreateApplicationSchema.safeParse({
     company: formData.get("company"),
     role: formData.get("role"),
@@ -41,6 +43,7 @@ export async function createApplication(formData: FormData): Promise<ActionResul
 
   const app = await prisma.application.create({
     data: {
+      userId,
       company: data.company,
       role: data.role,
       roleType: data.roleType,
@@ -56,15 +59,16 @@ export async function createApplication(formData: FormData): Promise<ActionResul
   });
 
   revalidatePath("/applications");
-  revalidatePath("/");
+  revalidatePath("/overview");
   return { ok: true, id: app.id };
 }
 
 export async function updateStage(id: string, stage: string): Promise<ActionResult> {
+  const userId = await requireUserId();
   const parsedStage = StageSchema.safeParse(stage);
   if (!parsedStage.success) return { ok: false, error: "Invalid stage" };
 
-  const current = await prisma.application.findUnique({ where: { id }, select: { stage: true } });
+  const current = await prisma.application.findFirst({ where: { id, userId }, select: { stage: true } });
   if (!current) return { ok: false, error: "Application not found" };
   if (current.stage === parsedStage.data) return { ok: true, id };
 
@@ -80,13 +84,14 @@ export async function updateStage(id: string, stage: string): Promise<ActionResu
 
   revalidatePath("/applications");
   revalidatePath(`/applications/${id}`);
-  revalidatePath("/");
+  revalidatePath("/overview");
   return { ok: true, id };
 }
 
 export async function deleteApplication(id: string): Promise<void> {
-  await prisma.application.delete({ where: { id } });
+  const userId = await requireUserId();
+  await prisma.application.deleteMany({ where: { id, userId } });
   revalidatePath("/applications");
-  revalidatePath("/");
+  revalidatePath("/overview");
   redirect("/applications");
 }

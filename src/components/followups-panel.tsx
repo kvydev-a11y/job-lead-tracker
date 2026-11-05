@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { Clock } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { parseStoredDraft } from "@/lib/followups/engine";
 import type { ContactType } from "@/lib/enums";
 import { FollowUpItem, type FollowUpItemData } from "./followup-item";
@@ -8,8 +9,9 @@ import { CheckFollowUpsButton } from "./check-followups-button";
 
 export async function FollowUpsPanel() {
   await connection();
+  const userId = await requireUserId();
   const stale = await prisma.outreach.findMany({
-    where: { status: "STALE" },
+    where: { userId, status: "STALE" },
     include: { contact: true, application: true },
     orderBy: { followUpDueAt: "asc" },
   });

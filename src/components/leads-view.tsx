@@ -2,6 +2,7 @@ import { connection } from "next/server";
 import { formatDistanceToNowStrict } from "date-fns";
 import { Inbox } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { SOURCE_LABEL, type Source } from "@/lib/enums";
 import { LeadActions } from "./lead-actions";
 import { cn } from "@/lib/utils";
@@ -19,8 +20,9 @@ function sourceLabel(source: string): string {
 
 export async function LeadsView() {
   await connection();
+  const userId = await requireUserId();
   const leads = await prisma.lead.findMany({
-    where: { status: "NEW" },
+    where: { userId, status: "NEW" },
     orderBy: { createdAt: "desc" },
   });
 

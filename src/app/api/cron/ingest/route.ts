@@ -1,14 +1,13 @@
 import { NextResponse, connection } from "next/server";
 import { revalidatePath } from "next/cache";
 import { runIngest } from "@/lib/ingest/ingest";
+import { connectedUserIds } from "@/lib/settings";
 
 /**
- * Gmail ingestion endpoint. Intended to be hit by a scheduler (Vercel Cron),
- * which sends `Authorization: Bearer $CRON_SECRET`. Also accepts `?secret=`.
- * If CRON_SECRET is unset (local dev) it runs unauthenticated.
+ * Gmail ingestion for every connected user. Hit by a scheduler (Vercel Cron),
+ * which sends `Authorization: Bearer $CRON_SECRET`; `?secret=` also accepted.
  */
 export async function GET(request: Request) {
-  // Force request-time execution (never prerendered) under Cache Components.
   await connection();
 
   const secret = process.env.CRON_SECRET;
@@ -20,11 +19,30 @@ export async function GET(request: Request) {
     }
   }
 
-  const summary = await runIngest();
-
-  if (summary.applications || summary.replies || summary.leads || summary.linkedin || summary.contacts) {
-    for (const p of ["/", "/applications", "/leads", "/contacts"]) revalidatePath(p);
+  const ids = await connectedUserIds();
+  const totals = {
+    users: ids.length,
+    applications: 0,
+    replies: 0,
+    linkedin: 0,
+    leads: 0,
+    contacts: 0,
+    outbound: 0,
+    errors: 0,
+  };
+  for (const uid of ids) {
+    const s = await runIngest(uid);
+    totals.applications += s.applications;
+    totals.replies += s.replies;
+    totals.linkedin += s.linkedin;
+    totals.leads += s.leads;
+    totals.contacts += s.contacts;
+    totals.outbound += s.outbound;
+    totals.errors += s.errors;
   }
 
-  return NextResponse.json(summary);
+  if (totals.applications || totals.replies || totals.leads || totals.linkedin || totals.contacts) {
+    for (const p of ["/overview", "/applications", "/leads", "/contacts"]) revalidatePath(p);
+  }
+  return NextResponse.json(totals);
 }

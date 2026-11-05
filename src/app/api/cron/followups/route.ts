@@ -1,11 +1,9 @@
 import { NextResponse, connection } from "next/server";
 import { revalidatePath } from "next/cache";
 import { runFollowUpScan } from "@/lib/followups/engine";
+import { prisma } from "@/lib/db";
 
-/**
- * Daily follow-up scan. Flags outreach threads quiet past the window and
- * attaches a draft (held for approval). Protected by CRON_SECRET when set.
- */
+/** Daily follow-up scan for every user. Protected by CRON_SECRET when set. */
 export async function GET(request: Request) {
   await connection();
 
@@ -18,9 +16,17 @@ export async function GET(request: Request) {
     }
   }
 
-  const summary = await runFollowUpScan();
-  if (summary.flagged > 0) {
-    for (const p of ["/", "/applications"]) revalidatePath(p);
+  const users = await prisma.user.findMany({ select: { id: true } });
+  let scanned = 0;
+  let flagged = 0;
+  for (const u of users) {
+    const s = await runFollowUpScan(u.id);
+    scanned += s.scanned;
+    flagged += s.flagged;
   }
-  return NextResponse.json(summary);
+
+  if (flagged > 0) {
+    for (const p of ["/overview", "/applications"]) revalidatePath(p);
+  }
+  return NextResponse.json({ users: users.length, scanned, flagged });
 }

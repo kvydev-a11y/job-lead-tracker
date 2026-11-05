@@ -2,13 +2,16 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Mail, Link2, Users } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { ContactTypeSelect } from "./contact-type-select";
 import type { ContactType } from "@/lib/enums";
 
 export async function ContactsView() {
   await connection();
+  const userId = await requireUserId();
 
   const contacts = await prisma.contact.findMany({
+    where: { userId },
     orderBy: { createdAt: "desc" },
     include: { application: { select: { id: true, company: true, role: true } } },
   });

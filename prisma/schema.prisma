@@ -1,8 +1,6 @@
 // Job Application & Lead Tracker — Prisma schema (Prisma ORM 7)
-// Status/type columns are String (not native enums) so the schema runs on
-// SQLite for local dev AND swaps cleanly to Postgres/Neon for deploy.
-// Allowed values are enforced in app code via Zod unions (see src/lib/enums.ts).
-// learn more: https://pris.ly/d/prisma-schema
+// Multi-tenant: every record is scoped to a User. Status/type columns are
+// String (not native enums), validated in app code via Zod (src/lib/enums.ts).
 
 generator client {
   provider = "prisma-client"
@@ -13,9 +11,28 @@ datasource db {
   provider = "postgresql"
 }
 
+/// An account. Passwords are bcrypt-hashed; demo accounts are read-mostly.
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  isDemo       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  applications    Application[]
+  contacts        Contact[]
+  outreaches      Outreach[]
+  leads           Lead[]
+  settings        Setting[]
+  processedEmails ProcessedEmail[]
+}
+
 /// A job application and everything tied to it.
 model Application {
   id             String   @id @default(cuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   company        String
   companyDomain  String?
   role           String
@@ -36,62 +53,69 @@ model Application {
   outreaches  Outreach[]
   lead        Lead?
 
+  @@index([userId])
   @@index([stage])
   @@index([roleType])
 }
 
 /// Audit trail of stage transitions, powering the funnel/timeline.
 model StageEvent {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   applicationId String
   application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   fromStage     String?
   toStage       String
-  at            DateTime @default(now())
+  at            DateTime    @default(now())
 
   @@index([applicationId])
 }
 
 /// A person associated with an application (HM, TA, recruiter, referral).
 model Contact {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   applicationId String
   application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   name          String
   title         String?
   email         String?
   linkedinUrl   String?
-  type          String   @default("OTHER") // HIRING_MANAGER | TALENT_ACQUISITION | RECRUITER | REFERRAL | OTHER
-  channel       String   @default("EMAIL") // EMAIL | LINKEDIN
-  source        String   @default("MANUAL") // HUNTER | APOLLO | MANUAL | MUSE | SARTHAK | LINKEDIN
-  confidence    Int?     // 0-100 where known
+  type          String      @default("OTHER") // HIRING_MANAGER | TALENT_ACQUISITION | RECRUITER | REFERRAL | OTHER
+  channel       String      @default("EMAIL") // EMAIL | LINKEDIN
+  source        String      @default("MANUAL") // HUNTER | APOLLO | MANUAL | MUSE | SARTHAK | LINKEDIN
+  confidence    Int?
   notes         String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime    @default(now())
 
   outreaches Outreach[]
 
+  @@index([userId])
   @@index([applicationId])
   @@index([email])
 }
 
 /// One conversation thread with a contact; drives follow-up detection.
 model Outreach {
-  id              String   @id @default(cuid())
+  id              String      @id @default(cuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   applicationId   String
   application     Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   contactId       String?
-  contact         Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
-  channel         String   @default("EMAIL") // EMAIL | LINKEDIN
+  contact         Contact?    @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  channel         String      @default("EMAIL")
   gmailThreadId   String?
   lastOutboundAt  DateTime?
   lastInboundAt   DateTime?
-  status          String   @default("WAITING") // WAITING | REPLIED | STALE
+  status          String      @default("WAITING") // WAITING | REPLIED | STALE
   followUpDueAt   DateTime?
   responseSummary String?
-  draftFollowUp   String?  // generated draft held for user approval
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  draftFollowUp   String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
+  @@index([userId])
   @@index([applicationId])
   @@index([status])
   @@index([gmailThreadId])
@@ -99,17 +123,21 @@ model Outreach {
 
 /// Incoming lead from Sarthak's agent / Muse / other, awaiting triage.
 model Lead {
-  id                     String   @id @default(cuid())
-  source                 String   @default("OTHER") // SARTHAK | MUSE | OTHER
+  id                     String       @id @default(cuid())
+  userId                 String
+  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source                 String       @default("OTHER") // SARTHAK | MUSE | OTHER
   company                String?
   role                   String?
-  rawEmailId             String?  @unique
-  extracted              String?  // JSON string of structured fields
-  status                 String   @default("NEW") // NEW | CONVERTED | DISMISSED
-  convertedApplicationId String?  @unique
+  rawEmailId             String?
+  extracted              String?
+  status                 String       @default("NEW") // NEW | CONVERTED | DISMISSED
+  convertedApplicationId String?      @unique
   convertedApplication   Application? @relation(fields: [convertedApplicationId], references: [id], onDelete: SetNull)
-  createdAt              DateTime @default(now())
+  createdAt              DateTime     @default(now())
 
+  @@unique([userId, rawEmailId])
+  @@index([userId])
   @@index([status])
   @@index([source])
 }
@@ -117,16 +145,26 @@ model Lead {
 /// Tracks which Gmail messages have been ingested, for idempotent polling.
 model ProcessedEmail {
   id             String   @id @default(cuid())
-  gmailMessageId String   @unique
-  kind           String   // APPLICATION | REPLY | LINKEDIN | LEAD | MUSE_CONTACTS | IGNORED
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  gmailMessageId String
+  kind           String
   processedAt    DateTime @default(now())
+
+  @@unique([userId, gmailMessageId])
+  @@index([userId])
 }
 
-/// Generic key/value store for integration secrets and sync state, e.g.
-/// the Google OAuth refresh token, connected Gmail address, and the last
-/// Gmail history id / ingest cursor. One row per key.
+/// Per-user key/value store for integration secrets and sync state (Google
+/// OAuth refresh token, connected Gmail address, last ingest cursor).
 model Setting {
-  key       String   @id
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key       String
   value     String
   updatedAt DateTime @updatedAt
+
+  @@unique([userId, key])
+  @@index([userId])
 }

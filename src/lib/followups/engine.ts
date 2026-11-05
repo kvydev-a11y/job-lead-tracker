@@ -27,13 +27,15 @@ export function parseStoredDraft(value: string | null): StoredDraft | null {
  * attach a drafted follow-up (held for the user's approval — never sent).
  * Idempotent: a thread already STALE with a draft is left untouched.
  */
-export async function runFollowUpScan(now: Date = new Date()): Promise<FollowUpScanSummary> {
-  const senderName = process.env.SIGNATURE_NAME || "Kavya";
+export async function runFollowUpScan(userId: string, now: Date = new Date()): Promise<FollowUpScanSummary> {
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+  const senderName = user?.name || process.env.SIGNATURE_NAME || "Me";
   const summary: FollowUpScanSummary = { scanned: 0, flagged: 0 };
 
   const cutoff = new Date(now.getTime() - FOLLOWUP_DAYS * 86_400_000);
   const candidates = await prisma.outreach.findMany({
     where: {
+      userId,
       status: { in: ["WAITING", "STALE"] },
       lastOutboundAt: { not: null, lte: cutoff },
     },

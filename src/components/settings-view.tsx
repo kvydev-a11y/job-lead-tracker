@@ -3,6 +3,7 @@ import { formatDistanceToNowStrict } from "date-fns";
 import { Mail, CheckCircle2, AlertTriangle, Plug } from "lucide-react";
 import { googleConfigured } from "@/lib/gmail/client";
 import { isGmailConnected, getSetting, SettingKey } from "@/lib/settings";
+import { requireUserId } from "@/lib/auth";
 import { GmailControls } from "./gmail-controls";
 
 export async function SettingsView({
@@ -11,11 +12,12 @@ export async function SettingsView({
   searchParams: Promise<{ [k: string]: string | string[] | undefined }>;
 }) {
   await connection();
+  const userId = await requireUserId();
   const sp = await searchParams;
   const configured = googleConfigured();
-  const connected = await isGmailConnected();
-  const email = connected ? await getSetting(SettingKey.GoogleEmail) : null;
-  const lastIngest = await getSetting(SettingKey.GmailLastIngestAt);
+  const connected = await isGmailConnected(userId);
+  const email = connected ? await getSetting(userId, SettingKey.GoogleEmail) : null;
+  const lastIngest = await getSetting(userId, SettingKey.GmailLastIngestAt);
 
   return (
     <div className="space-y-5">

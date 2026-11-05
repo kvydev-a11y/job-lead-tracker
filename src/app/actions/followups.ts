@@ -6,12 +6,14 @@ import { prisma } from "@/lib/db";
 import { runFollowUpScan, type FollowUpScanSummary } from "@/lib/followups/engine";
 import { getGmailClient, createGmailDraft } from "@/lib/gmail/client";
 import { isGmailConnected } from "@/lib/settings";
+import { requireUserId } from "@/lib/auth";
 import type { ActionResult } from "./applications";
 
-const paths = ["/", "/applications", "/contacts"];
+const paths = ["/overview", "/applications", "/contacts"];
 
 export async function runFollowUpScanAction(): Promise<FollowUpScanSummary> {
-  const summary = await runFollowUpScan();
+  const userId = await requireUserId();
+  const summary = await runFollowUpScan(userId);
   for (const p of paths) revalidatePath(p);
   return summary;
 }
@@ -22,18 +24,18 @@ const ApproveSchema = z.object({
   body: z.string().trim().min(1),
 });
 
-/** Create a Gmail draft from the (possibly edited) follow-up. Never sends. */
 export async function approveFollowUp(input: {
   outreachId: string;
   subject: string;
   body: string;
 }): Promise<ActionResult> {
+  const userId = await requireUserId();
   const parsed = ApproveSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Invalid draft" };
-  if (!(await isGmailConnected())) return { ok: false, error: "Gmail is not connected" };
+  if (!(await isGmailConnected(userId))) return { ok: false, error: "Gmail is not connected" };
 
-  const outreach = await prisma.outreach.findUnique({
-    where: { id: parsed.data.outreachId },
+  const outreach = await prisma.outreach.findFirst({
+    where: { id: parsed.data.outreachId, userId },
     include: { contact: true },
   });
   if (!outreach) return { ok: false, error: "Outreach not found" };
@@ -41,7 +43,7 @@ export async function approveFollowUp(input: {
   if (!to) return { ok: false, error: "This contact has no email address" };
 
   try {
-    const gmail = await getGmailClient();
+    const gmail = await getGmailClient(userId);
     const draftId = await createGmailDraft(gmail, {
       to,
       subject: parsed.data.subject,
@@ -67,16 +69,11 @@ export async function approveFollowUp(input: {
   return { ok: true };
 }
 
-/** Dismiss a flagged follow-up: reset the 7-day clock so it stops nagging. */
 export async function dismissFollowUp(outreachId: string): Promise<ActionResult> {
-  await prisma.outreach.update({
-    where: { id: outreachId },
-    data: {
-      status: "WAITING",
-      lastOutboundAt: new Date(),
-      followUpDueAt: null,
-      draftFollowUp: null,
-    },
+  const userId = await requireUserId();
+  await prisma.outreach.updateMany({
+    where: { id: outreachId, userId },
+    data: { status: "WAITING", lastOutboundAt: new Date(), followUpDueAt: null, draftFollowUp: null },
   });
   for (const p of paths) revalidatePath(p);
   return { ok: true };

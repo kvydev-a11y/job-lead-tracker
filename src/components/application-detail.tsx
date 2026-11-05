@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { format } from "date-fns";
 import { ArrowLeft, ExternalLink, Link2, Mail, Users, Clock } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import {
   CONTACT_TYPE_META,
   OUTREACH_STATUS_META,
@@ -25,10 +26,11 @@ import { DeleteApplicationButton, DeleteContactButton } from "./delete-buttons";
 
 export async function ApplicationDetail({ params }: { params: Promise<{ id: string }> }) {
   await connection();
+  const userId = await requireUserId();
   const { id } = await params;
 
-  const app = await prisma.application.findUnique({
-    where: { id },
+  const app = await prisma.application.findFirst({
+    where: { id, userId },
     include: {
       contacts: { orderBy: { createdAt: "asc" }, include: { outreaches: true } },
       outreaches: { orderBy: { updatedAt: "desc" } },

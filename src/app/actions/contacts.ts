@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { ContactTypeSchema } from "@/lib/enums";
 import type { ActionResult } from "./applications";
 
@@ -18,6 +19,7 @@ const CreateContactSchema = z.object({
 });
 
 export async function createContact(formData: FormData): Promise<ActionResult> {
+  const userId = await requireUserId();
   const parsed = CreateContactSchema.safeParse({
     applicationId: formData.get("applicationId"),
     name: formData.get("name"),
@@ -34,8 +36,15 @@ export async function createContact(formData: FormData): Promise<ActionResult> {
   }
 
   const d = parsed.data;
+  const app = await prisma.application.findFirst({
+    where: { id: d.applicationId, userId },
+    select: { id: true },
+  });
+  if (!app) return { ok: false, error: "Application not found" };
+
   const contact = await prisma.contact.create({
     data: {
+      userId,
       applicationId: d.applicationId,
       name: d.name,
       title: d.title || null,
@@ -54,14 +63,14 @@ export async function createContact(formData: FormData): Promise<ActionResult> {
 }
 
 export async function updateContactType(id: string, type: string): Promise<ActionResult> {
+  const userId = await requireUserId();
   const parsed = ContactTypeSchema.safeParse(type);
   if (!parsed.success) return { ok: false, error: "Invalid contact type" };
 
-  const contact = await prisma.contact.update({
-    where: { id },
-    data: { type: parsed.data },
-    select: { applicationId: true },
-  });
+  const contact = await prisma.contact.findFirst({ where: { id, userId }, select: { applicationId: true } });
+  if (!contact) return { ok: false, error: "Contact not found" };
+
+  await prisma.contact.update({ where: { id }, data: { type: parsed.data } });
 
   revalidatePath(`/applications/${contact.applicationId}`);
   revalidatePath("/contacts");
@@ -69,10 +78,11 @@ export async function updateContactType(id: string, type: string): Promise<Actio
 }
 
 export async function deleteContact(id: string): Promise<ActionResult> {
-  const contact = await prisma.contact.delete({
-    where: { id },
-    select: { applicationId: true },
-  });
+  const userId = await requireUserId();
+  const contact = await prisma.contact.findFirst({ where: { id, userId }, select: { applicationId: true } });
+  if (!contact) return { ok: false, error: "Contact not found" };
+
+  await prisma.contact.delete({ where: { id } });
   revalidatePath(`/applications/${contact.applicationId}`);
   revalidatePath("/contacts");
   return { ok: true };

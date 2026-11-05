@@ -9,9 +9,10 @@ import {
   Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { LogoutButton } from "./logout-button";
 
 export const NAV = [
-  { href: "/", label: "Overview", icon: LayoutDashboard },
+  { href: "/overview", label: "Overview", icon: LayoutDashboard },
   { href: "/applications", label: "Applications", icon: KanbanSquare },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/leads", label: "Leads", icon: Inbox },
@@ -21,16 +22,16 @@ export const NAV = [
 
 function isActive(pathname: string | null, href: string) {
   if (pathname == null) return false;
-  if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(href + "/");
 }
 
-/**
- * Pure presentational nav. Rendered server-side as the Suspense fallback (with
- * pathname=null, no active highlight) and client-side by <Sidebar> with the
- * live pathname — so active state streams in without blocking the prerender.
- */
-export function SidebarShell({ pathname }: { pathname: string | null }) {
+export function SidebarShell({
+  pathname,
+  userEmail,
+}: {
+  pathname: string | null;
+  userEmail?: string | null;
+}) {
   return (
     <>
       <aside className="hidden w-56 shrink-0 flex-col border-r border-border bg-card md:flex">
@@ -57,9 +58,14 @@ export function SidebarShell({ pathname }: { pathname: string | null }) {
             </Link>
           ))}
         </nav>
-        <p className="px-5 py-4 text-[11px] leading-relaxed text-slate-400">
-          Personal job-search dashboard
-        </p>
+        <div className="border-t border-border px-3 py-3">
+          {userEmail && (
+            <p className="truncate px-3 pb-1.5 text-[11px] text-slate-400" title={userEmail}>
+              {userEmail}
+            </p>
+          )}
+          <LogoutButton />
+        </div>
       </aside>
 
       <div className="flex items-center gap-1 overflow-x-auto border-b border-border bg-card px-3 py-2 md:hidden">

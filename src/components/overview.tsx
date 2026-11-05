@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { formatDistanceToNowStrict } from "date-fns";
 import { Clock, Send, Trophy, Layers, Activity } from "lucide-react";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { isFollowUpDue } from "@/lib/followups";
 import {
   CLOSED_STAGES,
@@ -37,8 +38,10 @@ function Stat({
 
 export async function Overview() {
   await connection();
+  const userId = await requireUserId();
 
   const apps = await prisma.application.findMany({
+    where: { userId },
     orderBy: { stageUpdatedAt: "desc" },
     include: {
       outreaches: { select: { status: true, lastOutboundAt: true, lastInboundAt: true } },

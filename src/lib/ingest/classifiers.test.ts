@@ -272,9 +272,9 @@ describe("classifyEmail — real-world formats", () => {
   it("Sarthak job-match report: detected by signature, company + multiple roles", () => {
     const c = classifyEmail(
       email({
-        from: "sarthaksgsits@gmail.com",
-        fromName: "Sarthak Bichhawa",
-        subject: "Microsoft job matches for Kavya — November 3",
+        from: "agent@example.com",
+        fromName: "Job Match Agent",
+        subject: "Microsoft job matches for you — November 3",
         bodyText:
           "Microsoft job matches for Kavya\n\nThis is an automated job-match report. Sarthak has not reviewed these recommendations yet.\n\n1. Principal Product Management Lead – Analytics · 200061916\n2. Principal Product Manager, capacity intelligence · 200047844\n3. Senior Product Manager, Microsoft Purview · 200063760",
       }),

@@ -35,8 +35,7 @@ automation built in later phases on top of a working manual core.
 ## Tech stack
 
 - **Next.js 16** (App Router, React Server Components, Cache Components / PPR) + **TypeScript**
-- **Prisma 7** ORM with **driver adapters** (SQLite locally via
-  `better-sqlite3`; swap to Postgres/Neon for deploy)
+- **Prisma 7** ORM with **driver adapters**, on **PostgreSQL** (Neon free tier)
 - **Tailwind CSS v4** + **@dnd-kit** for the board
 - **Zod** for input validation
 
@@ -55,17 +54,20 @@ A few choices worth calling out, because they shaped the architecture:
 - **Enrichment respects free tiers** — Hunter.io's domain search for breadth,
   Apollo CSV import for a few high-value targets, and always a manual fallback,
   all behind one `ContactProvider` interface.
-- **String-typed status columns** (not native DB enums) with Zod validation, so
-  the schema runs on SQLite locally and moves to Postgres with no churn.
+- **String-typed status columns** (not native DB enums) with Zod validation —
+  portable, simple SQL and validation that lives in one place (`src/lib/enums.ts`).
 
 ## Getting started
 
 Requires Node 20+.
 
+Needs a Postgres database — [Neon](https://neon.com)'s free tier works well
+(local dev and production use the same `DATABASE_URL`, just different values).
+
 ```bash
 npm install                 # installs deps and generates the Prisma client
-cp .env.example .env        # local SQLite — no external DB needed
-npm run db:migrate          # create the SQLite database
+cp .env.example .env        # paste your Neon DATABASE_URL into it
+npm run db:migrate          # apply migrations to the database
 npm run seed                # optional: load realistic sample data
 npm run dev                 # http://localhost:3000
 ```
@@ -81,15 +83,24 @@ npm run dev                 # http://localhost:3000
 | `npm run seed` | Load sample applications, contacts, leads |
 | `npm run lint` | Lint |
 
-## Deploying (Postgres / Neon)
+## Deploying (Vercel + Neon)
 
-SQLite is for local dev. For a hosted deploy (e.g. Vercel + Neon):
+Runs free on Vercel Hobby + a Neon free database.
 
-1. Create a Postgres database (Neon has a free tier) and set `DATABASE_URL`.
-2. In `prisma/schema.prisma`, set the datasource `provider` to `postgresql`.
-3. In `src/lib/db.ts`, swap `PrismaBetterSqlite3` for `@prisma/adapter-pg`
-   (`PrismaPg`). The queries don't change.
-4. `npm run db:migrate` against the new database, then deploy.
+1. **Neon:** create a project, copy the `DATABASE_URL`. Run `npm run db:migrate`
+   against it once (locally, with that URL in `.env`).
+2. **Vercel:** import the GitHub repo. Add env vars: `DATABASE_URL`,
+   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+   `GOOGLE_REDIRECT_URI=https://<app>.vercel.app/api/google/callback`,
+   `NEXT_PUBLIC_APP_URL=https://<app>.vercel.app`, `CRON_SECRET` (any random
+   string), optional `LEAD_SENDERS` / `SIGNATURE_NAME`.
+3. **Google Cloud:** add `https://<app>.vercel.app/api/google/callback` to the
+   OAuth client's authorized redirect URIs.
+4. Deploy, open the live URL, connect Gmail in Settings, and **Sync**.
+
+`vercel.json` schedules the ingest + follow-up crons daily (Hobby allows daily
+crons; use **Sync now** for on-demand). Vercel sends `CRON_SECRET` to cron
+requests automatically.
 
 ## Gmail ingestion (Phase 2)
 

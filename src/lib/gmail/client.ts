@@ -100,6 +100,28 @@ export async function getMessage(
   return res.data;
 }
 
+/** Create a Gmail draft (optionally attached to a thread). Returns the draft
+ *  id. This never sends — the user reviews and sends from Gmail. */
+export async function createGmailDraft(
+  gmail: gmail_v1.Gmail,
+  opts: { to: string; subject: string; body: string; threadId?: string | null },
+): Promise<string | null> {
+  const lines = [
+    `To: ${opts.to}`,
+    `Subject: ${opts.subject}`,
+    "MIME-Version: 1.0",
+    'Content-Type: text/plain; charset="UTF-8"',
+    "",
+    opts.body,
+  ];
+  const raw = Buffer.from(lines.join("\r\n"), "utf8").toString("base64url");
+  const res = await gmail.users.drafts.create({
+    userId: "me",
+    requestBody: { message: { raw, threadId: opts.threadId ?? undefined } },
+  });
+  return res.data.id ?? null;
+}
+
 /** Fetch a single attachment's raw bytes (base64url) by id. */
 export async function getAttachment(
   gmail: gmail_v1.Gmail,

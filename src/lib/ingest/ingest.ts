@@ -15,6 +15,7 @@ export type IngestSummary = {
   linkedin: number;
   leads: number;
   contacts: number;
+  outbound: number;
   ignored: number;
   errors: number;
 };
@@ -68,6 +69,7 @@ export async function runIngest(): Promise<IngestSummary> {
     linkedin: 0,
     leads: 0,
     contacts: 0,
+    outbound: 0,
     ignored: 0,
     errors: 0,
   };
@@ -115,12 +117,71 @@ export async function runIngest(): Promise<IngestSummary> {
     }
   }
 
+  // Detect outbound emails to known contacts (targeted, not a full scan).
+  await ingestOutbound(gmail, summary);
+
   // Only advance the cursor on a clean run; otherwise keep the window so
   // errored messages are retried next time (ProcessedEmail dedups successes).
   if (summary.errors === 0) {
     await setSetting(SettingKey.GmailLastIngestAt, new Date().toISOString());
   }
   return summary;
+}
+
+/**
+ * For each contact with an email, find the newest message the user sent them
+ * and record it as outreach (so the follow-up engine can track silence). One
+ * targeted `in:sent to:<email>` lookup per contact — cheap and quota-friendly.
+ * A newer outbound also clears a prior STALE flag (the user followed up).
+ */
+async function ingestOutbound(gmail: gmail_v1.Gmail, summary: IngestSummary): Promise<void> {
+  const contacts = await prisma.contact.findMany({
+    where: { email: { not: null }, channel: "EMAIL" },
+    select: { id: true, email: true, applicationId: true },
+  });
+
+  for (const c of contacts) {
+    if (!c.email) continue;
+    try {
+      await sleep(80);
+      const ids = await listMessageIds(gmail, `in:sent to:${c.email}`, 1);
+      if (ids.length === 0) continue;
+      const email = parseGmailMessage(await getMessageWithRetry(gmail, ids[0]));
+
+      const existing = await prisma.outreach.findFirst({
+        where: { applicationId: c.applicationId, contactId: c.id },
+      });
+
+      if (!existing) {
+        await prisma.outreach.create({
+          data: {
+            applicationId: c.applicationId,
+            contactId: c.id,
+            channel: "EMAIL",
+            gmailThreadId: email.threadId,
+            lastOutboundAt: email.date,
+            status: "WAITING",
+          },
+        });
+        summary.outbound++;
+      } else if (email.date.getTime() > (existing.lastOutboundAt?.getTime() ?? 0)) {
+        await prisma.outreach.update({
+          where: { id: existing.id },
+          data: {
+            lastOutboundAt: email.date,
+            gmailThreadId: email.threadId,
+            // A fresh outbound resets a prior stale flag.
+            ...(existing.status === "STALE"
+              ? { status: "WAITING", draftFollowUp: null, followUpDueAt: null }
+              : {}),
+          },
+        });
+        summary.outbound++;
+      }
+    } catch {
+      summary.errors++;
+    }
+  }
 }
 
 async function applyClassification(
